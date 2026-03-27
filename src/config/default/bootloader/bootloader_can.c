@@ -43,15 +43,14 @@
 // Section: Include Files
 // *****************************************************************************
 // *****************************************************************************
-
+#include "../src/config/default/bootloader/bootloader_can.h"
 #include "definitions.h"
 #include "bootloader_common.h"
-#include "bootloader_can.h"
+//#include "bootloader_can.h"
 //#include "GenericTypeDefs.h"
 #include "../src/config/default/GenericTypeDefs.h" 
 #include "../peripheral/uart/plib_uart4.h"
 #include <device.h>
-
 void WriteHexRecord2Flash(uint8_t* HexRecord, UINT totalHexRecLen);
 // *****************************************************************************
 // *****************************************************************************
@@ -76,7 +75,7 @@ void WriteHexRecord2Flash(uint8_t* HexRecord, UINT totalHexRecLen);
 
 
 #define HEADER_MAGIC             0xE2
-#define CAN_FILTER_ID            0x190  //0x45A
+#define CAN_FILTER_ID            (0x190)  //0x45A
 
 /* Standard identifier id[28:18]*/
 #define WRITE_ID(id)             (id << 18U)
@@ -91,17 +90,23 @@ void WriteHexRecord2Flash(uint8_t* HexRecord, UINT totalHexRecLen);
 #define TIMER_COMPARE_VALUE     (CORE_TIMER_FREQUENCY / 10)
 
 /* CAN Tx FIFO size */
-#define CAN_TX_FIFO_BUFFER_SIZE     16U
-
+#define CAN_TX_FIFO_BUFFER_SIZE             16U
+#define CAN_MSG_LENG                        8
+#define TX_BUFF_SIZE                        20
+#define RESET                               0
 #define FRAMEWORK_BUFF_SIZE					1000
-
-#define BTL_START_BYTE  0x01
-#define BTL_DLE_BYTE    0x10
-#define BTL_END_BYTE    0x04
+#define CMD_ID_TX_LEN                       1
+#define BOARD_INFO_CMD                      0xAA
+#define BOARD_SW_BTL_CMD                    0xAB
+#define BTL_START_BYTE                      0x01
+#define BTL_DLE_BYTE                        0x10
+#define BTL_END_BYTE                        0x04
 
 
 static BOOL RunApplication = FALSE;
- 	
+DWORD HexFileStatus = 0xffff;
+TxMsgs TxMessage;
+TxMsgs * p_Transmit;	
 typedef struct 
 {
 	UINT8 RecDataLen;
@@ -128,6 +133,8 @@ enum
     BTL_CMD_ERASE              = 0x02,
     BTL_CMD_PROGRAM            = 0x03,
     BTL_CMD_RUN                = 0x05,
+    BTL_COMPORT                = 0x06,
+    BTL_HEX_LOAD_FINISH        = 0x07, 
     BTL_CMD_CCU_BOARD          = 0xB5,
     
 }e_OLD_BTL_CMD;
@@ -159,7 +166,6 @@ static uint8_t rx_msg[HEADER_SIZE + MAX_DATA_SIZE];
 
 //static uint8_t data_seq = 0;
 
-static bool canBLActive  = false;
 
 uint8_t RxFrameValid = false;
 
@@ -171,7 +177,7 @@ typedef struct
 }T_FRAME;
 
 static T_FRAME RxBuff;
-//static T_FRAME TxBuff;
+static T_FRAME TxBuff;
 
 typedef struct {
     char sw1: 1;
@@ -194,7 +200,7 @@ union{
 // *****************************************************************************
 // *****************************************************************************
 void System_Start(void){
-    
+    p_Transmit = &TxMessage;
      /**********************************************************
  * set Cooling unit number 
  ***********************************************************/
@@ -207,6 +213,20 @@ void System_Start(void){
     uint8_t tx_message[8] = {1,2,3,4,5,6,7,8};
     tx_message[0] = DIP_SWITCH.CoolingUnitNumber;
     CAN1_MessageTransmit(0x100, 8U, &tx_message[0], 0U, CAN_MSG_TX_DATA_FRAME);
+}
+
+bool ValidAppPresent(void)
+{
+	DWORD *AppPtr;
+	AppPtr = (DWORD *)USER_APP_RESET_ADDRESS;
+	if(*AppPtr == 0xFFFFFFFF)
+	{
+		return 0;   //FALSE;
+	}
+	else
+	{
+		return 1;   //TRUE;
+	}
 }
 /* Function to program received application firmware data into internal flash */
 //static void flash_write(void)
@@ -290,7 +310,7 @@ uint16_t CalculateCrc(uint8_t *data, uint32_t len)
 ********************************************************************/
 void BuildRxFrame(uint8_t *RxData, uint16_t RxLen)
 {
-	static bool Escape = 0;//FALSE;
+	static bool Escape = RESET;//FALSE;
 	WORD_VAL crc;
 	
 	
@@ -302,34 +322,34 @@ void BuildRxFrame(uint8_t *RxData, uint16_t RxLen)
         
 		if(RxBuff.Len >= sizeof(RxBuff.Data))
 		{
-			RxBuff.Len = 0;
+			RxBuff.Len = RESET;
 		}	
 		
 		switch(*RxData)
 		{
 			
-			case 1:// SOH: //Start of header
+			case BTL_START_BYTE:// SOH: //Start of header
 				if(Escape)
 				{
 					// Received byte is not SOH, but data.
 					RxBuff.Data[RxBuff.Len++] = *RxData;
 					// Reset Escape Flag.
-					Escape = 0;//FALSE;
+					Escape = RESET;//FALSE;
 				}
 				else
 				{
 					// Received byte is indeed a SOH which indicates start of new frame.
-					RxBuff.Len = 0;				
+					RxBuff.Len = RESET;				
 				}		
 				break;
 				
-			case 4: //EOT: // End of transmission
+			case BTL_END_BYTE: //EOT: // End of transmission
 				if(Escape)
 				{
 					// Received byte is not EOT, but data.
 					RxBuff.Data[RxBuff.Len++] = *RxData;
 					// Reset Escape Flag.
-					Escape = 0;//FALSE;
+					Escape = RESET;//FALSE;
 				}
 				else
 				{
@@ -344,7 +364,7 @@ void BuildRxFrame(uint8_t *RxData, uint16_t RxLen)
 						if((CalculateCrc(RxBuff.Data, (uint32_t)(RxBuff.Len-2)) == crc.Val) && (RxBuff.Len > 2))
 						{
 							// CRC matches and frame received is valid.
-							RxFrameValid = 1;//TRUE;
+							RxFrameValid = TRUE;//TRUE;
 											
 						}
 					}
@@ -352,25 +372,25 @@ void BuildRxFrame(uint8_t *RxData, uint16_t RxLen)
 				break;
 				
 				
-		    case 16: //DLE: // Escape character received.
+		    case BTL_DLE_BYTE: //DLE: // Escape character received.
 				if(Escape)
 				{
 					// Received byte is not ESC but data.
 					RxBuff.Data[RxBuff.Len++] = *RxData;
 					// Reset Escape Flag.
-					Escape = 0;//FALSE;					
+					Escape = RESET;//FALSE;					
 				}
 				else
 				{
 					// Received byte is an escape character. Set Escape flag to escape next byte.
-					Escape = 1;//TRUE;					
+					Escape = TRUE;//TRUE;					
 				}	
 				break;
 			
 			default: // Data field.
 			    RxBuff.Data[RxBuff.Len++] = *RxData;
 			    // Reset Escape Flag.
-			    Escape = 0;//FALSE;
+			    Escape = RESET;//FALSE;
 				break;	
 			
 		}
@@ -542,191 +562,177 @@ void WriteHexRecord2Flash(uint8_t* HexRecord, UINT totalHexRecLen)
 	}//while(1)	
 		
 }
+
+/*******************************************************
+ *
+ *******************************************************/
+UCHAR8 Forming_CAN_TxMsg(UINT16 Msg_ID, TxMsgs * ptr, UINT8 *Data, UINT8 count){
+ UCHAR8 status = RESET;
+
+    if (ptr != NULL) {
+        memset(&ptr->TxMsg[0],RESET,CAN_MSG_LENG);
+        switch (Msg_ID) {
+            case CAN_FILTER_ID:
+                ptr->TxMsgID = CAN_FILTER_ID;
+                ptr->TxMsg[0] = Data[count++];
+                ptr->TxMsg[1] = Data[count++];
+                ptr->TxMsg[2] = Data[count++];
+                ptr->TxMsg[3] = Data[count++];
+                ptr->TxMsg[4] = Data[count++];
+                ptr->TxMsg[5] = Data[count++];
+                ptr->TxMsg[6] = Data[count++];
+                ptr->TxMsg[7] = Data[count];
+                status = TRUE;
+                break;
+            default:
+                status = FALSE; //ERROR_CAN_ID;
+                break;
+        }
+    }
+    
+    return status;
+}
+
+#if 1
+unsigned char GetTransmitFrame(unsigned char* Buff)
+{
+//  1. Initialise BuffLen = 0                                               //    
+	INT BuffLen     = RESET;
+	WORD_VAL crc    = {RESET};
+	UINT8 i         = RESET;
+//  2. If TxBuff.Len > 0                                                    //	
+	if(TxBuff.Len) 
+	{
+//      1. Clear output buffer                                              //        
+        memset(&Buff[0],RESET,CAN_MSG_LENG);
+//      2. Calculate CRC of TxBuff.Data                                     //.
+		crc.Val = CalculateCrc(TxBuff.Data, (UINT32)TxBuff.Len);
+//      3. Append CRC (LB, HB) to TxBuff.Data                               //        
+		TxBuff.Data[TxBuff.Len++] = crc.byte.LB;
+		TxBuff.Data[TxBuff.Len++] = crc.byte.HB; 	
+//      4. Insert SOH at start of Buff                                      //			
+		Buff[BuffLen++] = BTL_START_BYTE;
+//      5. For each byte in TxBuff.Data                                     //		
+		for(i = RESET; i < TxBuff.Len; i++)
+		{
+//          - If byte == SOH/EOT/DLE                                        //            
+			if((TxBuff.Data[i] == BTL_END_BYTE) || (TxBuff.Data[i] == BTL_START_BYTE)
+				|| (TxBuff.Data[i] == BTL_DLE_BYTE))
+			{
+//              ? Insert DLE (escape character)                             //
+				Buff[BuffLen++] = BTL_DLE_BYTE;			
+			}
+//          - Copy actual data byte into Buff                               //            
+			Buff[BuffLen++] = TxBuff.Data[i];
+		} 
+//      6. Append EOT to mark end of frame                                  //
+		Buff[BuffLen++] = BTL_END_BYTE;
+//      7. Reset TxBuff.Len to 0 (buffer consumed)                          //		
+		TxBuff.Len = RESET; // Purge this buffer, no more required.
+	}		
+	return(BuffLen); // Return buffer length.
+}
+#endif 
 /*******************************************************************
  * Process follow old Bootloader V1.0
  *********************************************************************/
-static void process_oldcommand(void)
+void process_oldcommand(void)
 {
-    uint8_t  tx_message[8];
-    uint8_t cmd = RxBuff.Data[0];
+    uint8_t cmd = TxBuff.Data[0] = RxBuff.Data[0];
+    //          - Extract requested FDB ID and dispenser number                  //
+    UINT8 requestedID   = RESET;
+    UINT8 reqDispNum    = RESET;
+    uint8_t i           = RESET;   
     uint16_t btlVersion = bootloader_GetVersion();
-    void* pFlash = NULL;
-    uint8_t i = 0;
+    void* pFlash        = NULL;
+    
     switch (cmd) {
         case BTL_CMD_READ_VERSION:
-            tx_message[0] = BTL_START_BYTE;
-            tx_message[1] = BTL_DLE_BYTE;
-            tx_message[2] = BTL_CMD_READ_VERSION;
-            tx_message[3] = (uint8_t) ((btlVersion >> 8) & 0xFFU); //Major ver
-            tx_message[4] = (uint8_t) (btlVersion & 0xFFU); //minor ver
-            tx_message[5] = 0x52;
-            tx_message[6] = 0x51;
-            tx_message[7] = BTL_END_BYTE;
-
-            (void) CAN1_MessageTransmit(CAN_FILTER_ID, 8U, tx_message, 0U, CAN_MSG_TX_DATA_FRAME);
+            TxBuff.Len = (CMD_ID_TX_LEN + 2); 
             
+            TxBuff.Data[1] = (uint8_t) ((btlVersion >> 8) & 0xFFU); //Bootloader Major ver
+            TxBuff.Data[2] = (uint8_t) (btlVersion & 0xFFU); //Bootloader minor ver
+       
             break;
         case BTL_CMD_ERASE: //ERASE Cmd
+            //          - Erase boot status flag page                                    //            
+            (void)NVM_PageErase(BOOT_FLAG_STATUS_ADDR);
+//          - Mark erase start                                               //            
+            (void)NVM_WordWrite(0x01, BOOT_FLAG_STATUS_ADDR);  // Indicate flash erase start
             /* Process */
             pFlash = (void*)FLASH_START;
-            for (i = 0; i < ((FLASH_LENGTH + 1) / ERASE_BLOCK_SIZE); i++) { //
+            for (i = RESET; i < ((FLASH_LENGTH + 1) / ERASE_BLOCK_SIZE); i++) { //
                 /* Erase the Current sector */
                 WD_RESET_Toggle();
                 (void) NVM_PageErase((uint32_t) pFlash + (i * ERASE_BLOCK_SIZE));
                 while (NVM_IsBusy() == true);
 
             }
-                 
+            (void)NVM_WordWrite(0x01, BOOT_FLAG);  // Indicate flash erase start
+            (void)NVM_WordWrite(0x01, BOOT_FLAG_STATUS_ADDR);  // Indicate flash erase start
             /* Response */
-            tx_message[0] = BTL_START_BYTE;
-            tx_message[1] = BTL_CMD_ERASE;
-            tx_message[2] = 0x42;
-            tx_message[3] = 0x20;
-            tx_message[4] = BTL_END_BYTE;
-            tx_message[5] = 0;
-            tx_message[6] = 0;
-            tx_message[7] = 0;
-            (void) CAN1_MessageTransmit(CAN_FILTER_ID, 8U, tx_message, 0U, CAN_MSG_TX_DATA_FRAME);
+            TxBuff.Len = CMD_ID_TX_LEN ; 
+
             break;
         case BTL_CMD_PROGRAM:
             
             WriteHexRecord2Flash(&RxBuff.Data[1], RxBuff.Len - 3);
             
             WD_RESET_Toggle();
-            
-            tx_message[0] = BTL_START_BYTE;
-            tx_message[1] = BTL_CMD_PROGRAM;
-            tx_message[2] = 0x63; //CRC 
-            tx_message[3] = 0x30; //CRC
-            tx_message[4] = BTL_END_BYTE;
-            tx_message[5] = 0;
-            tx_message[6] = 0;
-            tx_message[7] = 0;
-            (void) CAN1_MessageTransmit(CAN_FILTER_ID, 8U, tx_message, 0U, CAN_MSG_TX_DATA_FRAME);
-            break;
-        case BTL_CMD_CCU_BOARD://0xB5 command
+            TxBuff.Len = CMD_ID_TX_LEN; 
 
-            if ((RxBuff.Data[2] == 0xAA) && (RxBuff.Data[1] == DIP_SWITCH.CoolingUnitNumber)) {
-                if (RxBuff.Data[1] == 0x01) {
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = BTL_DLE_BYTE;
-                    tx_message[3] = 0x01;
-                    tx_message[4] = 0xAA;
-                    tx_message[5] = 0x9E;
-                    tx_message[6] = 0x32;
-                    tx_message[7] = BTL_END_BYTE;
-                }else if (RxBuff.Data[1] == 0x02) {
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = 0x02;
-                    tx_message[3] = 0xAA;
-                    tx_message[4] = 0xCD;
-                    tx_message[5] = 0x67;
-                    tx_message[6] = BTL_END_BYTE;
-                    tx_message[7] = 0;
-                } else if (RxBuff.Data[1] == 0x03) {
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = 0x03;
-                    tx_message[3] = 0xAA;
-                    tx_message[4] = 0xFC;
-                    tx_message[5] = 0x54;
-                    tx_message[6] = BTL_END_BYTE;
-                    tx_message[7] = 0;
-                } else if(RxBuff.Data[1] == 0x04){
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = BTL_DLE_BYTE;
-                    tx_message[3] = 0x01;
-                    tx_message[4] = 0xAA;
-                    tx_message[5] = 0x6B;
-                    tx_message[6] = 0xCD;
-                    tx_message[7] = BTL_END_BYTE;
-                } else {
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = BTL_DLE_BYTE;
-                    tx_message[3] = 0x01;
-                    tx_message[4] = 0xAA;
-                    tx_message[5] = 0x9E;
-                    tx_message[6] = 0x32;
-                    tx_message[7] = BTL_END_BYTE;
+            break;
+        case BTL_CMD_CCU_BOARD:
+
+
+            requestedID = RxBuff.Data[1] & 0x0F; //Extract FDB Number from byte 
+            reqDispNum = (RxBuff.Data[1] >> 4 );
+
+            TxBuff.Len = (CMD_ID_TX_LEN + 2);            
+            if (RxBuff.Data[2] == BOARD_INFO_CMD)
+                {
+//              - Prepare response frame                                     //                    
+                    TxBuff.Data[1] = ((reqDispNum << 4 ) | requestedID);
+                    TxBuff.Data[2] = 02;//RxBuff.Data[2];
+                    TxBuff.Data[3] = 0xFF;
+                    TxBuff.Len = (CMD_ID_TX_LEN + 2 + 1);   
                 }
-                
-                
-            } else if((RxBuff.Data[2] == 0xAB) && (RxBuff.Data[1] == DIP_SWITCH.CoolingUnitNumber)){
-                if (RxBuff.Data[1] == 0x01) {
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = BTL_DLE_BYTE;
-                    tx_message[3] = 0x01;
-                    tx_message[4] = 0xAB;
-                    tx_message[5] = 0xBF;
-                    tx_message[6] = 0x22;
-                    tx_message[7] = BTL_END_BYTE;
-                }else if (RxBuff.Data[1] == 0x02) {
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = 0x02;
-                    tx_message[3] = 0xAB;
-                    tx_message[4] = 0xEC;
-                    tx_message[5] = 0x77;
-                    tx_message[6] = BTL_END_BYTE;
-                    tx_message[7] = 0;
-                } else if (RxBuff.Data[1] == 0x03) {
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = 0x03;
-                    tx_message[3] = 0xAB;
-                    tx_message[4] = 0xDD;
-                    tx_message[5] = 0x44;
-                    tx_message[6] = BTL_END_BYTE;
-                    tx_message[7] = 0;
-                } else if(RxBuff.Data[1] == 0x04){
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = BTL_DLE_BYTE;
-                    tx_message[3] = 0x01;
-                    tx_message[4] = 0xAB;
-                    tx_message[5] = 0x4A;
-                    tx_message[6] = 0xDD;
-                    tx_message[7] = BTL_END_BYTE;
-                } else {
-                    tx_message[0] = BTL_START_BYTE;
-                    tx_message[1] = BTL_CMD_CCU_BOARD;
-                    tx_message[2] = BTL_DLE_BYTE;
-                    tx_message[3] = 0x01;
-                    tx_message[4] = 0xAB;
-                    tx_message[5] = 0xBF;
-                    tx_message[6] = 0x22;
-                    tx_message[7] = BTL_END_BYTE;
-                }
-             
-            } else {
-                tx_message[0] = BTL_START_BYTE;
-                tx_message[1] = BTL_CMD_CCU_BOARD;
-                tx_message[2] = 0xFF;
-                tx_message[3] = 0xF1;
-                tx_message[4] = 0xFF;
-                tx_message[5] = 0xFF;
-                tx_message[6] = 0xFF;
-                tx_message[7] = BTL_END_BYTE;
+            else if(RxBuff.Data[2] == BOARD_SW_BTL_CMD)
+            {
+                TxBuff.Data[1] = ((reqDispNum << 4 ) | requestedID);
+                TxBuff.Data[2] = RxBuff.Data[2];
             }
-            (void) CAN1_MessageTransmit(CAN_FILTER_ID, 8U, tx_message, 0U, CAN_MSG_TX_DATA_FRAME);
+                else
+                {
+//          - Else ? Clear TxBuff length                                              //                    
+                    TxBuff.Len = RESET;
+                }
+
             break;
         
         case 4:
             break;
         case BTL_CMD_RUN: //RUN cmd
-            RunApplication = TRUE;
-            WD_RESET_Toggle();
-            NVM_PageErase(BOOT_FLAG); 
-            while (NVM_IsBusy() == true);
- 
-            bootloader_TriggerReset();
-            RunApplication = TRUE;
-            
+//          - Check boot flag status                                         //
+            memcpy((void *)&HexFileStatus, (void *)BOOT_FLAG_STATUS_ADDR, sizeof(HexFileStatus));
+//          - If valid, erase boot flag                                      //
+            if (HexFileStatus != 0x01)
+            {
+                RunApplication = TRUE;
+                WD_RESET_Toggle();
+                NVM_PageErase(BOOT_FLAG);
+                while (NVM_IsBusy() == true);
+
+                bootloader_TriggerReset();
+                RunApplication = TRUE;
+            }
+            break;
+        case BTL_COMPORT:
+            TxBuff.Len = CMD_ID_TX_LEN ;
+            break;
+        case BTL_HEX_LOAD_FINISH:
+            //          - Erase boot status flag page                                    //
+            (void)NVM_PageErase(BOOT_FLAG_STATUS_ADDR);
             break;
         default:
             break;
@@ -737,10 +743,16 @@ static void process_oldcommand(void)
 /* Function to receive application firmware via CAN1 */
 static void CAN1_task(void)
 {
-    uint32_t status = 0;
-    uint32_t rx_messageID = 0;
-    uint8_t  rx_messageLength = 0;
-
+    uint32_t status         = RESET;
+    uint32_t rx_messageID   = RESET;
+    uint8_t rx_messageLength = RESET;
+    
+    uint8_t count           = RESET;
+    uint8_t retStatus       = RESET;
+    uint8_t sendLen         = RESET;
+    uint8_t bytesLeft       = RESET;
+    uint8_t framedBuff[TX_BUFF_SIZE] = {RESET};
+    
     CAN_MSG_RX_ATTRIBUTE msgFrameAttr = CAN_MSG_RX_DATA_FRAME;
 
     if (CAN1_InterruptGet(1U, CAN_FIFO_INTERRUPT_RXNEMPTYIF_MASK))
@@ -750,9 +762,7 @@ static void CAN1_task(void)
         status = (uint32_t)CAN1_ErrorGet();
         if (status == CAN_ERROR_NONE)
         {
-//            canBLActive = true;
-
-            (void)memset(rx_msg, 0x00, sizeof(rx_msg));
+            (void)memset(rx_msg, RESET, sizeof(rx_msg));
 
             /* Receive FIFO 1 New Message */
             if(CAN1_MessageReceive(&rx_messageID, &rx_messageLength, rx_msg, NULL, 1U, &msgFrameAttr) == true)
@@ -765,17 +775,48 @@ static void CAN1_task(void)
                     /* Build Receive Frame */
                     
                     BuildRxFrame(rx_msg, rx_messageLength);
-                    if(RxFrameValid == 1){
+                    if(RxFrameValid == TRUE){
                         process_oldcommand();
+//                          3. Get transmit frame buffer                    //                        
+                        bytesLeft = GetTransmitFrame(framedBuff);
+                        // Now send TxBuff.Data in segments of 8 bytes
+                        count = RESET;
+//                          4. While bytesLeft > 0                          //                        
+                        while (bytesLeft > RESET)
+                        {
+//                              4.1. Form CAN Transmit message              //
+                            retStatus = Forming_CAN_TxMsg(CAN_FILTER_ID, p_Transmit, framedBuff, count);
+                            UINT32 delaycount = RESET;
+                            //TODO - add debug here, are we not going into retStatus success? PRINT retStatus
+                            if (retStatus == TRUE)
+                            {
+//                                  1. Determine send length (max 8 bytes)  //                                
+                                sendLen = (bytesLeft > CAN_MSG_LENG) ? CAN_MSG_LENG : bytesLeft;
+//                                  2. Transmit CAN message (extended frame)//                                
+                                CAN1_MessageTransmit(p_Transmit->TxMsgID, sendLen, p_Transmit->TxMsg, 0U, CAN_MSG_TX_DATA_FRAME);
+//                                  3. Update counters                      //
+                                count += sendLen;
+                                bytesLeft -= sendLen;
+//                                  4. Small delay loop                     //
+                                for (delaycount = RESET; delaycount < 200000; delaycount++) {
+                                    // delay loop
+                                }
+                            }
+                            else
+                            {
+//                              1. Abort transmission                    //
+                                break;
+                            }
+                        } 
                         WD_RESET_Toggle();
-                        RxFrameValid = 0;
+                        RxFrameValid = RESET;
                     }else{
                         WD_RESET_Toggle();
                     }
                 }
                 else
                 {
-                    canBLActive = false;
+                    
                 }
             }
         }
@@ -791,11 +832,7 @@ static void CAN1_task(void)
 
 void bootloader_CAN_Tasks(void)
 {
-    do
-    {
-        CAN1_task();
-
-    }  while (canBLActive);
+    CAN1_task();
 }
 
 

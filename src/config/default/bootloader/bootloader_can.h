@@ -44,7 +44,7 @@
 //#include "../src/config/default/GenericTypeDefs.h"
 #include "bootloader_common.h"
 #include "sys/kmem.h"
-
+//#include "../GenericTypeDefs.h"
 
 
 
@@ -95,13 +95,33 @@
 #define EXT_SEG_ADRS_RECORD 2
 #define EXT_LIN_ADRS_RECORD 4
 
+typedef struct {
+    unsigned short int TxMsgID;
+    unsigned char TxMsg[8];
+    unsigned char TRUE_MSG_LENGTH;
+    
+    union {
+        unsigned int Time_stamp_valueTx_Int;
+        unsigned short int Time_stamp_MS;
+        unsigned char Time_stamp_valueTx[4];
+    } TimeStamp_valueTx;
+
+} TxMsgs;
+
+extern TxMsgs TxMessage;
+extern TxMsgs * p_Transmit;
 
 void bootloader_CAN_Tasks( void );
 
-void BuildRxFrame(uint8_t *RxData, uint16_t RxLen);
-uint16_t CalculateCrc(uint8_t *data, uint32_t len);
+void BuildRxFrame(unsigned char *RxData, unsigned short int RxLen);
+void process_oldcommand(void);
+uint16_t CalculateCrc(unsigned char *data, unsigned int len);
 bool ExitFirmwareUpgradeMode(void);
 void System_Start(void);
+unsigned char Forming_CAN_TxMsg(unsigned short int Msg_ID, TxMsgs * ptr, unsigned char *Data, unsigned char count);
+unsigned char GetTransmitFrame(unsigned char* Buff);
+bool ValidAppPresent(void);
+
 typedef enum {
     BTL_INFO_MSG = 0x182,
     BTL_SWITCH_MSG = 0x183,

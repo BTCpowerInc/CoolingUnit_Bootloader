@@ -72,7 +72,7 @@
 #define CAN_ACCEPTANCE_MASK_OFFSET   (0x4U)
 #define CAN_MESSAGE_RAM_CONFIG_SIZE (2U)
 #define CAN_MSG_IDE_MASK            (0x10000000U)
-#define CAN_MSG_SID_MASK            (0x7FFU)
+#define CAN_MSG_SID_MASK            (0x7FEU)
 #define CAN_MSG_TIMESTAMP_MASK      (0xFFFF0000U)
 #define CAN_MSG_EID_MASK            (0x1FFFFFFFU)
 #define CAN_MSG_DLC_MASK            (0xFU)

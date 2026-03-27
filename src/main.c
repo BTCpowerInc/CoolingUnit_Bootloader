@@ -54,6 +54,7 @@
 #include "definitions.h"                // SYS function prototypes
 #include "config/default/bootloader/bootloader_can.h"
 
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: Main Entry Point
@@ -62,7 +63,6 @@
 
 int main ( void )
 {
-    
     /* Initialize all modules */
     SYS_Initialize ( NULL );
     System_Start();
@@ -70,10 +70,11 @@ int main ( void )
 
     memcpy((void *) &upgradeFlag, (void *) BOOT_FLAG, sizeof (upgradeFlag));
     UART4_Write("BTL START\n",10);
-//    DIP_SWITCH.CoolingUnitNumber;
- 
-    if (upgradeFlag == 1) {
-        while (!ExitFirmwareUpgradeMode()) {
+//    upgradeFlag = 1;
+    if(!ValidAppPresent() || (upgradeFlag == 1))
+    {
+        while (!ExitFirmwareUpgradeMode())
+        {
             WDReset();
             bootloader_CAN_Tasks();
         }      
@@ -83,6 +84,7 @@ int main ( void )
     /* Execution should not come here during normal operation */
     return ( EXIT_FAILURE );
 }
+
 
 /*******************************************************************************
  End of File

@@ -72,7 +72,7 @@ extern "C" {
 
 /* CPU clock frequency */
 #define CPU_CLOCK_FREQUENCY 48000000
-
+#define USER_APP_RESET_ADDRESS   0x9D009000  // Entry point for application
 // *****************************************************************************
 // *****************************************************************************
 // Section: System Functions
@@ -125,7 +125,7 @@ void jump_to_application(void);
 /* Nullify SYS_Tasks() if only PLIBs are used. */
 #define     SYS_Tasks()
 #define BOOT_FLAG  (0x9D01FC00)
-
+#define BOOT_FLAG_STATUS_ADDR (0x9D01FD00)
 // *****************************************************************************
 // *****************************************************************************
 // Section: extern declarations
