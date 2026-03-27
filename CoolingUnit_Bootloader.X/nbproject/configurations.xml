@@ -51,10 +51,8 @@
       <logicalFolder name="config" displayName="config" projectFiles="true">
         <logicalFolder name="default" displayName="default" projectFiles="true">
           <itemPath>../src/BootLoader.ld</itemPath>
-          <itemPath>../src/config/default/p32MX530F128H.ld</itemPath>
         </logicalFolder>
       </logicalFolder>
-      <itemPath>../src/config/default/btl.ld</itemPath>
     </logicalFolder>
     <logicalFolder name="SourceFiles"
                    displayName="Source Files"
@@ -120,7 +118,21 @@
         <archiverTool>
         </archiverTool>
         <loading>
-          <loadableFile>C:/Users/admin/Desktop/HEX_Files/CoolingUnit/2025/CoolingSystem_P4_V12.hex</loadableFile>
+          <makeArtifact PL="../../../../CoolingUnit/CS_With_Disp_V16/CoolingSystem/CoolingUnitController.X"
+                        CT="1"
+                        CN="default"
+                        AC="true"
+                        BL="true"
+                        WD="../../../../CoolingUnit/CS_With_Disp_V16/CoolingSystem/CoolingUnitController.X"
+                        BC="${MAKE}  -f Makefile CONF=default"
+                        DBC="${MAKE}  -f Makefile CONF=default TYPE_IMAGE=DEBUG_RUN"
+                        CC="rm -rf &quot;build/default&quot; &quot;dist/default&quot;"
+                        OP="dist/default/production/CoolingUnitController.X.production.hex"
+                        DOP="dist/default/debug/CoolingUnitController.X.debug.elf"
+                        FL="dist/default/production/CoolingUnitController.X.production.hex"
+                        PD="dist/default/production/CoolingUnitController.X.production.elf"
+                        DD="dist/default/debug/CoolingUnitController.X.debug.elf">
+          </makeArtifact>
           <useAlternateLoadableFile>false</useAlternateLoadableFile>
           <parseOnProdLoad>false</parseOnProdLoad>
           <alternateLoadableFile></alternateLoadableFile>

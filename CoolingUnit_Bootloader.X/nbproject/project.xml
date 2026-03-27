@@ -7,7 +7,9 @@
             <creation-uuid>079c5e0e-b969-4a12-9a16-12ed92be8bba</creation-uuid>
             <make-project-type>0</make-project-type>
             <sourceEncoding>ISO-8859-1</sourceEncoding>
-            <make-dep-projects/>
+            <make-dep-projects>
+                <make-dep-project>../../../../CoolingUnit/CS_With_Disp_V16/CoolingSystem/CoolingUnitController.X</make-dep-project>
+            </make-dep-projects>
             <sourceRootList>
                 <sourceRootElem>../src</sourceRootElem>
             </sourceRootList>
